@@ -1,0 +1,24 @@
+{
+  "development": {
+    "username": "postgres",
+    "password": "C9p5aqh",
+    "database": "sistema_prestamos",
+    "host": "127.0.0.1",
+    "dialect": "postgres"
+  },
+  "test": {
+    "username": "postgres",
+    "password": "C9p5aqh",
+    "database": "sistema_prestamos",
+    "host": "127.0.0.1",
+    "dialect": "postgres"
+  },
+  "production": {
+    "username": "postgres",
+    "password": "C9p5aqh",
+    "database": "sistema_prestamos",
+    "host": "127.0.0.1",
+    "dialect": "postgres"
+  }
+}
+
