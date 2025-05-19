@@ -82,18 +82,19 @@ const getCreditosImpagos = catchError(async (req, res) => {
 });
 
 const createPago = catchError(async (req, res) => {
-  const { cuotaId, monto } = req.body;
-  const user_created_id = req.user.userId;
+  const { creditoId, valor, metodoPago } = req.body;
+  const userId = req.user.userId;
 
-  if (!cuotaId || !monto) {
-    return res.status(400).json({ error: "cuotaId y monto son requeridos" });
+  if (!creditoId || !valor || !metodoPago) {
+    return res.status(400).json({ error: "Todos los campos son requeridos" });
   }
 
-  const pago = await Pago.create({ cuotaId, monto, user_created_id });
+  // Llamamos a la función createPago del modelo que ahora maneja toda la lógica con transacciones
+  const resultado = await Credito.createPago({ creditoId, valor, metodoPago, userId });
 
   return res.status(201).json({
-    message: "Pago registrado correctamente",
-    data: pago
+    message: resultado.message,
+    pagoId: resultado.pagoId
   });
 });
 

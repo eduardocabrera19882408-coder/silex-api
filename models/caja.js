@@ -1,5 +1,6 @@
 // models/caja.js
 const pool = require('../config/db'); // Importar la conexión a la base de datos
+const Ruta = require('./ruta'); // Importar el modelo de Caja
 
 const Caja = {
 
@@ -23,10 +24,14 @@ const Caja = {
     }
   },
 
-  // Obtener una caja por su ID
+  // Obtener una caja por su ID de usuario
   getByUserId: async (id) => {
     try {
-      const res = await pool.query('SELECT * FROM cajas WHERE "usuarioId" = $1', [id]);
+      const ruta = await Ruta.getByUserId(id);
+      if(!ruta){
+        throw new Error('No tienes una ruta asignada');
+      }
+      const res = await pool.query('SELECT * FROM cajas WHERE "rutaId" = $1', [ruta[0].id]);
       return res.rows[0];
     } catch (error) {
       throw error;
@@ -115,89 +120,6 @@ const Caja = {
       );
       await client.query('COMMIT');
       return { message: 'Saldo agregado correctamente', nuevoSaldoUsuario: nuevoSaldo };
-    } catch (error) {
-      await client.query('ROLLBACK');
-      throw error;
-    } finally {
-      client.release();
-    }
-  },
-
-  // Agregar saldo a la caja de un usuario, verificando el permiso del administrador
-  asignarSaldoAOficina: async (adminId, usuarioId, monto) => {
-    const client = await pool.connect();
-    try {
-      await client.query('BEGIN');
-
-      // 1️⃣ Verificar que el administrador tiene el permiso 'asignar_saldo' en su permisoId
-      const permisoAdminQuery = `
-        SELECT p.descripcion
-        FROM permisos p
-        JOIN usuarios u ON u."permisoId" = p.id
-        WHERE u.id = $1;
-      `;
-      const permisoAdminResult = await client.query(permisoAdminQuery, [adminId]);
-
-      if(permisoAdminResult.rows.length === 0 || !permisoAdminResult.rows[0].descripcion.includes('asign')) {
-        throw new Error('El usuario no tiene permiso para asignar saldo.');
-      }
-
-      // 2️⃣ Verificar la caja del usuario receptor
-      const cajaRes = await client.query(
-        'SELECT id, "saldoActual" FROM cajas WHERE "usuarioId" = $1',
-        [usuarioId]
-      );
-
-      if (cajaRes.rows.length === 0) {
-        throw new Error('No se encontró la caja del usuario.');
-      }
-
-      const caja = cajaRes.rows[0];
-      const saldoAnteriorUsuario = parseFloat(caja.saldoActual);
-      const nuevoSaldoUsuario = saldoAnteriorUsuario + parseFloat(monto);
-
-      // 3️⃣ Actualizar la caja del usuario receptor
-      await client.query(
-        'UPDATE cajas SET "saldoActual" = $1, "updatedAt" = NOW() WHERE id = $2',
-        [nuevoSaldoUsuario, caja.id]
-      );
-
-      // 4️⃣ Registrar movimiento en la caja del usuario receptor
-      await client.query(
-        `INSERT INTO movimientos_caja 
-          ("cajaId", tipo, monto, descripcion, saldo_anterior, saldo, "usuarioId", category, "createdAt", "updatedAt")
-          VALUES ($1, 'ingreso', $2, 'Asignación de saldo', $3, $4, $5, $6, NOW(), NOW());`,
-        [caja.id, monto, saldoAnteriorUsuario, nuevoSaldoUsuario, adminId, 'ingreso']
-      );
-
-      // 5️⃣ Registrar movimiento en la caja del administrador (sin afectar su saldo)
-      const cajaAdminRes = await client.query(
-        'SELECT id, "saldoActual" FROM cajas WHERE "usuarioId" = $1',
-        [adminId]
-      );
-
-      if (cajaAdminRes.rows.length === 0) {
-        throw new Error('No se encontró la caja del administrador.');
-      }
-
-      const cajaAdmin = cajaAdminRes.rows[0];
-
-      await client.query(
-        `INSERT INTO movimientos_caja 
-          ("cajaId", tipo, monto, descripcion, saldo_anterior, saldo, "usuarioId", category, "createdAt", "updatedAt")
-          VALUES ($1, 'asignacion', $2, 'Asignación de saldo', $3, $3, NOW(), NOW());`,
-        [cajaAdmin.id, monto, parseFloat(cajaAdmin.saldoActual), adminId, 'egreso']
-      );
-
-      await client.query('COMMIT');
-
-      return {
-        message: 'Saldo agregado correctamente',
-        nuevoSaldoUsuario,
-        movimientoCajaId: caja.id,
-        adminCajaId: cajaAdmin.id
-      };
-
     } catch (error) {
       await client.query('ROLLBACK');
       throw error;
@@ -307,11 +229,19 @@ const Caja = {
   },
  
   createEgreso: async ({ monto, descripcion, userId, gastoCategoryId, userRole, foto }) => {
+
     const estado = (userRole === 'administrador' || userRole === 'administrador_oficina') ? 'aprobado' : 'pendiente';
-  
+    const aprovedId = (userRole === 'administrador' || userRole === 'administrador_oficina') ? userId : 0
+
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
+
+      const ruta = await Ruta.getByUserId(userId);
+
+      if(!ruta){
+        throw new Error('No tienes una ruta asignada');
+      }
   
       // 🔍 Validar hora máxima si es cobrador
       if (userRole === 'cobrador') {
@@ -334,12 +264,12 @@ const Caja = {
   
       // 🟡 Obtener la caja del usuario
       const cajaResult = await client.query(
-        'SELECT id, "saldoActual", estado FROM cajas WHERE "usuarioId" = $1 LIMIT 1',
-        [userId]
+        'SELECT id, "saldoActual", estado FROM cajas WHERE "rutaId" = $1 LIMIT 1',
+        [ruta[0].id]
       );
   
       if (cajaResult.rowCount === 0) {
-        throw new Error('No se encontró una caja asociada al usuario');
+        throw new Error('No se encontró una caja asociada');
       }
   
       if (cajaResult.rows[0].estado === 'cerrada') {
@@ -358,12 +288,12 @@ const Caja = {
       const insertEgresoQuery = `
         INSERT INTO egresos (
           monto, descripcion, estado, "cajaId", "gastoCategoryId",
-          "user_created_id", foto, "createdAt", "updatedAt"
+          "user_created_id", "user_aproved_id", foto, "createdAt", "updatedAt"
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, NOW(), NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
         RETURNING *;
       `;
-      const egresoValues = [monto, descripcion, estado, cajaId, gastoCategoryId, userId, foto];
+      const egresoValues = [monto, descripcion, estado, cajaId, gastoCategoryId, userId, aprovedId, foto];
       const egresoResult = await client.query(insertEgresoQuery, egresoValues);
       const egreso = egresoResult.rows[0];
   
@@ -663,10 +593,17 @@ const Caja = {
     try {
       await client.query('BEGIN');
   
-      // Obtener la caja del usuario
+      //Obtener la ruta asignada al usuario
+
+      const ruta = await Ruta.getByUserId(userId);
+      if(!ruta) {
+        throw new Error('No tienes una ruta asignada');
+      }
+
+      // Obtener la caja de la ruta
       const caja = await client.query(
-        'SELECT id FROM cajas WHERE "usuarioId" = $1 LIMIT 1',
-        [userId]
+        'SELECT id FROM cajas WHERE "rutaId" = $1 LIMIT 1',
+        [ruta[0].id]
       );
       const cajaId = caja.rows[0]?.id;
       if (!cajaId) throw new Error('Caja no encontrada');

@@ -13,7 +13,7 @@ router.get('/ruta/:rutaId', verifyToken, ConfigController.getConfigByRutaId);
 // Obtener configuración de crédito por ruta
 router.get('/caja', verifyToken, ConfigController.getConfigCaja);
 
-//Editar la config por defecto
+//Obtener la config por defecto
 router.get('/default', ConfigController.getConfigDefault);
 
 // Obtener configuración de crédito por ruta

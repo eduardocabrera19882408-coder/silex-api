@@ -2,7 +2,7 @@ const db = require('../config/db');
 
 const Producto = {
   // Crear un producto con rutas asignadas
-  create: async (productoData, rutas) => {
+  create: async (productoData) => {
     // Crear el producto primero
     const queryText = `
       INSERT INTO productos (nombre, precio, stock, estado, "createdAt", "updatedAt") 
@@ -10,7 +10,7 @@ const Producto = {
     `;
     const values = [productoData.nombre, productoData.precio, productoData.stock, "activo"];
     const result = await db.query(queryText, values);
-    const productoId = result.rows;
+    const productoId = result.rows[0].id;
 
     // Devolver el producto
     return Producto.getById(productoId);
@@ -81,39 +81,11 @@ const Producto = {
       SELECT *
       FROM productos
       WHERE nombre ILIKE $1
-      ORDER BY id asc
+      ORDER BY id DESC
       LIMIT $2 OFFSET $3;
     `;
 
     const { rows } = await db.query(queryText, [`%${searchTerm}%`, limit, offset]);
-
-    // Organizar los productos con sus rutas en un array
-    const productosMap = {};
-
-    rows.forEach((row) => {
-      if (!productosMap[row.id]) {
-        productosMap[row.id] = {
-          id: row.id,
-          nombre: row.nombre,
-          precio: row.precio,
-          stock: row.stock,
-          createdAt: row.createdAt,
-          updatedAt: row.updatedAt,
-          rutas: []
-        };
-      }
-
-      // Agregar rutas solo si existen
-      if (row.rutaId) {
-        productosMap[row.id].rutas.push({
-          id: row.rutaId,
-          nombre: row.rutaNombre
-        });
-      }
-    });
-
-    // Convertir el objeto en un array de productos
-    const resultRows = Object.values(productosMap);
 
     // Obtener total de productos encontrados
     const countQuery = `SELECT COUNT(*) FROM productos WHERE nombre ILIKE $1;`;
@@ -123,7 +95,7 @@ const Producto = {
     const totalPages = total > 0 ? Math.ceil(total / limit) : 1;
 
     return {
-      data: resultRows,
+      data: rows,
       total: total,
       page: Number(page),
       limit: Number(limit),
@@ -135,10 +107,13 @@ const Producto = {
     const queryText = `
       SELECT p.*
       FROM productos p
-      INNER JOIN rutaproducto rp ON p.id = rp."productoId"
-      WHERE rp."rutaId" = $1
-        AND p.estado = 'activo'
-        AND p.stock > 0
+      WHERE p.id = ANY (
+        SELECT UNNEST(r."productoId")
+        FROM ruta r
+        WHERE r.id = $1
+      )
+      AND p.estado = 'activo'
+      AND p.stock > 0
     `;
   
     const result = await db.query(queryText, [rutaId]);

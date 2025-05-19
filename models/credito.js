@@ -103,8 +103,8 @@ const Credito = {
     const credito = result.rows[0];
 
     // 7️⃣ Actualizar saldo en caja
-    const updateCajaQuery = `UPDATE cajas SET "saldoActual" = "saldoActual" - $1 WHERE "usuarioId" = $2;`;
-    await db.query(updateCajaQuery, [monto, usuarioId]);
+    const updateCajaQuery = `UPDATE cajas SET "saldoActual" = "saldoActual" - $1 WHERE "rutaId" = $2;`;
+    await db.query(updateCajaQuery, [monto, rutaId]);
 
     // 8️⃣ Registrar movimiento de caja
     const movimientoQuery = `
@@ -440,18 +440,136 @@ const Credito = {
   },
 
   //Crear un pago
-  createPago: async ({ cuotaId, monto, user_created_id }) => {
-    const query = `
-      INSERT INTO pagos (
-        "cuotaId", monto, "user_created_id", "createdAt", "updatedAt"
-      ) VALUES ($1, $2, $3, NOW(), NOW())
-      RETURNING *;
-    `;
-
-    const values = [cuotaId, monto, user_created_id];
-    const result = await db.query(query, values);
-    return result.rows[0];
-  }
+  createPago: async ({ creditoId, valor, metodoPago, userId }) => {
+    const client = await db.connect();
+  
+    try {
+      await client.query('BEGIN');
+  
+      // 1. Obtener datos del crédito (interés, usuario que lo creó, cliente)
+      const creditoRes = await client.query(`
+        SELECT interes, "usuarioId", "clienteId"
+        FROM creditos
+        WHERE id = $1
+      `, [creditoId]);
+  
+      if (creditoRes.rowCount === 0) throw new Error("Crédito no encontrado");
+  
+      const { interes, usuarioId: creadorCreditoId, clienteId } = creditoRes.rows[0];
+  
+      // 2. Crear registro del pago principal
+      const pagoRes = await client.query(`
+        INSERT INTO pagos (
+          monto, "user_created_id", "metodoPago", "createdAt", "updatedAt"
+        ) VALUES ($1, $2, $3, NOW(), NOW())
+        RETURNING id
+      `, [valor, userId, metodoPago]);
+  
+      const pagoId = pagoRes.rows[0].id;
+  
+      // 3. Obtener cuotas pendientes del crédito
+      const cuotasRes = await client.query(`
+        SELECT id, monto, monto_pagado
+        FROM cuotas
+        WHERE "creditoId" = $1 AND estado = 'impago'
+        ORDER BY "fechaPago" ASC
+      `, [creditoId]);
+  
+      let montoRestante = valor;
+      let totalCapitalPagado = 0;
+      let totalInteresPagado = 0;
+  
+      for (const cuota of cuotasRes.rows) {
+        if (montoRestante <= 0) break;
+  
+        const saldoCuota = cuota.monto - cuota.monto_pagado;
+        const pagoAplicado = Math.min(saldoCuota, montoRestante);
+  
+        // 4. Insertar en pagos_cuotas
+        await client.query(`
+          INSERT INTO pagos_cuotas ("pagoId", "cuotaId", monto_abonado)
+          VALUES ($1, $2, $3)
+        `, [pagoId, cuota.id, pagoAplicado]);
+  
+        // 5. Actualizar la cuota
+        await client.query(`
+          UPDATE cuotas
+          SET monto_pagado = monto_pagado + $1,
+              estado = CASE WHEN monto_pagado + $1 >= monto THEN 'pagado' ELSE estado END,
+              "updatedAt" = NOW()
+          WHERE id = $2
+        `, [pagoAplicado, cuota.id]);
+  
+        // 6. Calcular capital e interés reales
+        const interesPago = pagoAplicado * (interes / 100);
+        const capitalPago = pagoAplicado - interesPago;
+  
+        totalInteresPagado += interesPago;
+        totalCapitalPagado += capitalPago;
+  
+        montoRestante -= pagoAplicado;
+      }
+  
+      // 7. Actualizar el crédito
+      await client.query(`
+        UPDATE creditos
+        SET 
+          capital_pagado = capital_pagado + $1,
+          interes_pagado = interes_pagado + $2,
+          saldo_capital = saldo_capital - $1,
+          saldo_interes = saldo_interes - $2,
+          "updatedAt" = NOW()
+        WHERE id = $3
+      `, [totalCapitalPagado, totalInteresPagado, creditoId]);
+  
+      // 8. Obtener caja según la ruta del creador del crédito
+      const cajaRes = await client.query(`
+        SELECT c.id, c."saldoActual"
+        FROM cajas c
+        JOIN ruta r ON r.id = c."rutaId"
+        WHERE r."userId" = $1
+        LIMIT 1
+      `, [creadorCreditoId]);
+  
+      if (cajaRes.rowCount === 0) throw new Error("Caja no encontrada");
+  
+      const cajaId = cajaRes.rows[0].id;
+      const saldoAnterior = parseFloat(cajaRes.rows[0].saldoActual);
+      const nuevoSaldo = saldoAnterior + parseFloat(valor);
+  
+      // 9. Actualizar saldo de caja
+      await client.query(`
+        UPDATE cajas
+        SET "saldoActual" = $1
+        WHERE id = $2
+      `, [nuevoSaldo, cajaId]);
+  
+      // 10. Registrar movimiento en caja con los nuevos campos
+      await client.query(`
+        INSERT INTO movimientos_caja (
+          "cajaId", descripcion, saldo, saldo_anterior, "createdAt", "updatedAt",
+          monto, tipo, "usuarioId", category, "clienteId", "creditoId"
+        ) VALUES (
+          $1, 'Registro de pago de crédito', $2, $3, NOW(), NOW(),
+          $4, 'abono', $5, 'ingreso', $6, $7
+        )
+      `, [
+        cajaId, nuevoSaldo, saldoAnterior, valor,
+        userId, clienteId, creditoId
+      ]);
+  
+      await client.query('COMMIT');
+  
+      return { success: true, message: "Pago registrado correctamente", pagoId };
+  
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error(err);
+      throw new Error("Error al registrar el pago");
+    } finally {
+      client.release();
+    }
+  }  
 };
 
 const generarCuotas = async (creditoId, monto, interes, plazo_dias, frecuencia_pago) => {
@@ -512,14 +630,13 @@ const generarCuotas = async (creditoId, monto, interes, plazo_dias, frecuencia_p
   const insertPromises = cuotas.map(cuota => {
     const query = `
       INSERT INTO cuotas 
-      ("creditoId", monto, "fechaPago", "metodoPago", estado, "createdAt", "updatedAt")
-      VALUES ($1, $2, $3, $4, $5, $6, $7);
+      ("creditoId", monto, "fechaPago", estado, "createdAt", "updatedAt", "monto_pagado")
+      VALUES ($1, $2, $3, $4, $5, $6, 0);
     `;
     const values = [
       cuota.creditoId,
       cuota.monto,
       cuota.fechaPago,
-      cuota.metodoPago,
       cuota.estado,
       cuota.createdAt,
       cuota.updatedAt,

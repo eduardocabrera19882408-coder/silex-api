@@ -113,6 +113,23 @@ const Ruta = {
     return ruta;
   },
 
+  // Obtener ruta por id de usuario
+  getByUserId: async (id) => {
+    const queryText = `
+      SELECT *
+      FROM ruta
+      WHERE "userId" = $1
+      LIMIT 1
+      ;
+    `;
+
+    const result = await db.query(queryText, [id]);
+
+    if (result.rows.length === 0) return null;
+
+    return result.rows
+  },
+
   // Editar una ruta y actualizar su relación con los usuarios
   update: async (id, updateData) => {
     try {
@@ -319,19 +336,44 @@ const Ruta = {
         cl.nombres AS nombre,
         split_part(cl."coordenadasCobro", ',', 1)::float AS lat,
         split_part(cl."coordenadasCobro", ',', 2)::float AS lng,
-        COALESCE(SUM(cuotas_hoy.monto), 0) AS cuota,
-        MAX(cuotas_hoy."fechaPago")::date AS "fechaPago",
-        COALESCE(SUM(atrasadas."cuotasAtrasadas"), 0) AS "cuotasAtrasadas"
+        COALESCE(cuota_pendiente.monto, 0) AS cuota,
+        cuota_pendiente."fechaPago"::date AS "fechaPago",
+        cuota_pendiente.monto_pagado,
+        COALESCE(SUM(atrasadas."cuotasAtrasadas"), 0) AS "cuotasAtrasadas",
+        cr.id AS "creditoId"
       FROM clientes cl
       JOIN creditos cr ON cr."clienteId" = cl.id
       LEFT JOIN (
-        SELECT 
+        SELECT DISTINCT ON (cu."creditoId")
           cu."creditoId",
           cu.monto,
-          cu."fechaPago"
+          cu."fechaPago",
+          cu.monto_pagado
         FROM cuotas cu
-        WHERE cu."fechaPago"::date = CURRENT_DATE
-      ) cuotas_hoy ON cuotas_hoy."creditoId" = cr.id
+        WHERE 
+          (
+            cu."fechaPago"::date = CURRENT_DATE
+            OR (
+              cu."fechaPago"::date < CURRENT_DATE
+              AND cu.estado != 'pagado'
+              AND NOT EXISTS (
+                SELECT 1
+                FROM pagos_cuotas pc
+                JOIN pagos pa ON pa.id = pc."pagoId"
+                WHERE pc."cuotaId" = cu.id 
+                  AND pa."createdAt"::date = CURRENT_DATE
+                GROUP BY pc."cuotaId"
+                HAVING SUM(pc.monto_abonado) >= cu.monto
+              )
+            )
+          )
+        ORDER BY cu."creditoId", 
+                 CASE 
+                   WHEN cu."fechaPago"::date < CURRENT_DATE THEN 0
+                   ELSE 1
+                 END, 
+                 cu."fechaPago"
+      ) cuota_pendiente ON cuota_pendiente."creditoId" = cr.id
       LEFT JOIN (
         SELECT 
           cu."creditoId",
@@ -340,27 +382,34 @@ const Ruta = {
         WHERE cu."fechaPago"::date < CURRENT_DATE 
           AND cu.estado != 'pagado'
           AND NOT EXISTS (
-            SELECT 1 
-            FROM pagos pa 
-            WHERE pa."cuotaId" = cu.id 
+            SELECT 1
+            FROM pagos_cuotas pc
+            JOIN pagos pa ON pa.id = pc."pagoId"
+            WHERE pc."cuotaId" = cu.id 
               AND pa."createdAt"::date = CURRENT_DATE
+            GROUP BY pc."cuotaId"
+            HAVING SUM(pc.monto_abonado) >= cu.monto
           )
         GROUP BY cu."creditoId"
       ) atrasadas ON atrasadas."creditoId" = cr.id
       WHERE cr."usuarioId" = $1
-      GROUP BY cl.id;
+      GROUP BY cl.id, cr.id, cuota_pendiente.monto, cuota_pendiente."fechaPago", cuota_pendiente.monto_pagado;
     `;
   
     const { rows } = await db.query(query, [usuarioId]);
   
-    return rows.map(row => ({
-      lat: row.lat,
-      lng: row.lng,
-      nombre: row.nombre,
-      cuota: parseFloat(row.cuota),
-      fechaPago: row.fechaPago,
-      cuotasAtrasadas: parseInt(row.cuotasAtrasadas)
-    }));
+    return rows
+      .map(row => ({
+        lat: row.lat,
+        lng: row.lng,
+        nombre: row.nombre,
+        cuota: parseFloat(row.cuota),
+        fechaPago: row.fechaPago,
+        cuotasAtrasadas: parseInt(row.cuotasAtrasadas),
+        monto_pagado: row.monto_pagado !== null ? parseFloat(row.monto_pagado) : null,
+        creditoId: row.creditoId
+      }))
+      .filter(cliente => cliente.cuota > 0 || cliente.cuotasAtrasadas > 0);
   },    
 
   // Eliminar una ruta y su relación en usuariorutas + eliminar configuración de crédito

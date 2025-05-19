@@ -57,7 +57,7 @@ const deleteCaja = catchError(async (req, res) => {
   }
 
   return res.status(204).json();
-});
+}); 
 
 // Función para agregar saldo a la caja de un usuario
 const agregarSaldo = catchError(async (req, res) => {
