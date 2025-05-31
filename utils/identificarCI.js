@@ -8,17 +8,17 @@ function identificarCedula(cedula) {
       return ["Ecuador", true];
     }
   
-    // Validación Colombia
-    const resultadoColombia = validarCedulaColombiana(cedula);
-    if (resultadoColombia.valido) {
-      return ["Colombia", true];
-    }
+    // // Validación Colombia
+    // const resultadoColombia = validarCedulaColombiana(cedula);
+    // if (resultadoColombia.valido) {
+    //   return ["Colombia", true];
+    // }
   
-    // Validación Venezuela
-    const resultadoVenezuela = validarCIVen(cedula);
-    if (resultadoVenezuela.valido) {
-      return ["Venezuela", true];
-    }
+    // // Validación Venezuela
+    // const resultadoVenezuela = validarCIVen(cedula);
+    // if (resultadoVenezuela.valido) {
+    //   return ["Venezuela", true];
+    // }
   
     // Si no es de ninguno
     return ["Desconocida", false];

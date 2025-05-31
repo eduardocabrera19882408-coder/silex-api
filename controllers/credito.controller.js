@@ -4,6 +4,7 @@ const Credito = require('../models/credito');
 // Crear un nuevo crédito
 const createCredito = catchError(async (req, res) => {
   const creditoData = req.body;
+  const { primeraCuota } = req.body
 
   // Llamar al método create del modelo para crear el crédito
   const credito = await Credito.create(creditoData);
@@ -12,6 +13,18 @@ const createCredito = catchError(async (req, res) => {
   if (credito.error) {
     return res.status(400).json({ error: credito.error });
   }
+
+  // Realizar el pago de la primera cuota
+  if(primeraCuota){
+    await Credito.createPago({
+      creditoId: credito.credito.id,
+      valor: credito.cuotaMonto,
+      metodoPago: 'Efectivo',
+      userId: credito.credito.usuarioId,
+      location: credito.location
+    })
+  }
+
 
   // Si todo salió bien, devolvemos el crédito creado con código 201
   return res.status(201).json(credito);
@@ -82,7 +95,7 @@ const getCreditosImpagos = catchError(async (req, res) => {
 });
 
 const createPago = catchError(async (req, res) => {
-  const { creditoId, valor, metodoPago } = req.body;
+  const { creditoId, valor, metodoPago, location } = req.body;
   const userId = req.user.userId;
 
   if (!creditoId || !valor || !metodoPago) {
@@ -90,7 +103,8 @@ const createPago = catchError(async (req, res) => {
   }
 
   // Llamamos a la función createPago del modelo que ahora maneja toda la lógica con transacciones
-  const resultado = await Credito.createPago({ creditoId, valor, metodoPago, userId });
+  const resultado = await Credito.createPago({ creditoId, valor, metodoPago, userId, location });
+  if (resultado.error) return res.status(404).json({ error: resultado.error });
 
   return res.status(201).json({
     message: resultado.message,

@@ -24,6 +24,16 @@ const Caja = {
     }
   },
 
+  // Obtener turno por su id de caja
+  getTurnoById: async (id) => {
+    try {
+      const res = await pool.query('SELECT * FROM turnos WHERE caja_id = $1 AND fecha_cierre IS NULL', [id]);
+      return res.rows[0];
+    } catch (error) {
+      throw error;
+    }
+  },
+
   // Obtener una caja por su ID de usuario
   getByUserId: async (id) => {
     try {
@@ -32,6 +42,24 @@ const Caja = {
         throw new Error('No tienes una ruta asignada');
       }
       const res = await pool.query('SELECT * FROM cajas WHERE "rutaId" = $1', [ruta[0].id]);
+      return res.rows[0];
+    } catch (error) {
+      throw error;
+    }
+  },
+  
+  // Obtener una caja por su ID de ruta
+  getByRutaId: async (id) => {
+    try {
+      const res = await pool.query(`
+        SELECT 
+          cajas.*, 
+          ruta.nombre AS ruta_nombre -- Ajusta los campos según lo que necesites de la tabla ruta
+        FROM cajas
+        JOIN ruta ON cajas."rutaId" = ruta.id
+        WHERE cajas."rutaId" = $1
+      `, [id]);
+  
       return res.rows[0];
     } catch (error) {
       throw error;
@@ -128,69 +156,47 @@ const Caja = {
     }
   },
 
-  cerrarCaja: async (adminOficinaId, cobradorId, montoDejar) => {
+  cerrarCaja: async (cajaId, userId) => {
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
-
-      // 1️⃣ Obtener caja del cobrador
-      const resCajaCobrador = await client.query(
-        `SELECT id, "saldoActual", estado FROM cajas WHERE "usuarioId" = $1`,
-        [cobradorId]
+      let montoFinal = 0
+      const turnoActual = await client.query(
+        `SELECT *
+          FROM turnos
+          WHERE "caja_id" = $1 AND fecha_cierre IS NULL
+          ORDER BY fecha_cierre DESC
+          LIMIT 1;
+        `,
+        [cajaId]
       );
-      if (resCajaCobrador.rows.length === 0) throw new Error('Caja del cobrador no encontrada.');
-      const cajaCobrador = resCajaCobrador.rows[0];
-      if (cajaCobrador.estado === 'cerrada') throw new Error('La caja ya está cerrada.');
 
-      const saldoAnteriorCobrador = parseFloat(cajaCobrador.saldoActual);
-      const nuevoSaldoCobrador = parseFloat(montoDejar);
-      const montoTransferido = saldoAnteriorCobrador - nuevoSaldoCobrador;
+      const caja = await client.query(
+        `SELECT *
+          FROM cajas
+          WHERE id = $1
+          LIMIT 1;
+        `,
+        [cajaId]
+      );
 
-      // 2️⃣ Actualizar saldo del cobrador y cerrar caja
+      montoFinal = montoFinal + caja?.rows[0]?.saldoActual
+
+      // 1️⃣ Cerrar caja de la ruta
       await client.query(
-        `UPDATE cajas SET "saldoActual" = $1, estado = 'cerrada', "updatedAt" = NOW() WHERE id = $2`,
-        [nuevoSaldoCobrador, cajaCobrador.id]
+        `UPDATE cajas SET estado = 'cerrada', "updatedAt" = NOW() WHERE id = $1`,
+        [cajaId]
       );
-
-      // 3️⃣ Movimiento en caja del cobrador
+      //Cerrar el turno
       await client.query(
-        `INSERT INTO movimientos_caja 
-        ("cajaId", tipo, monto, descripcion, saldo_anterior, saldo, "usuarioId", "createdAt", "updatedAt")
-        VALUES ($1, 'retiro', $2, 'Cierre de caja por administrador', $3, $4, $5, NOW(), NOW())`,
-        [cajaCobrador.id, montoTransferido, saldoAnteriorCobrador, nuevoSaldoCobrador, adminOficinaId]
-      );
-
-      // 4️⃣ Obtener caja del administrador de oficina
-      const resCajaAdmin = await client.query(
-        `SELECT id, "saldoActual" FROM cajas WHERE "usuarioId" = $1`,
-        [adminOficinaId]
-      );
-      if (resCajaAdmin.rows.length === 0) throw new Error('Caja del administrador no encontrada.');
-      const cajaAdmin = resCajaAdmin.rows[0];
-      const saldoAnteriorAdmin = parseFloat(cajaAdmin.saldoActual);
-      const nuevoSaldoAdmin = saldoAnteriorAdmin + montoTransferido;
-
-      // 5️⃣ Actualizar saldo en caja del administrador
-      await client.query(
-        `UPDATE cajas SET "saldoActual" = $1, "updatedAt" = NOW() WHERE id = $2`,
-        [nuevoSaldoAdmin, cajaAdmin.id]
-      );
-
-      // 6️⃣ Movimiento en caja del admin
-      await client.query(
-        `INSERT INTO movimientos_caja 
-        ("cajaId", tipo, monto, descripcion, saldo_anterior, saldo, "usuarioId", "createdAt", "updatedAt")
-        VALUES ($1, 'ingreso', $2, 'Cierre de caja del cobrador', $3, $4, $5, NOW(), NOW())`,
-        [cajaAdmin.id, montoTransferido, saldoAnteriorAdmin, nuevoSaldoAdmin, adminOficinaId]
+        `UPDATE turnos SET fecha_cierre = NOW(), monto_final = $1, observaciones_cierre = $2, usuario_close = $3 WHERE id = $4`,
+        [montoFinal, 'observacion de cierre', userId, turnoActual.rows[0].id]
       );
 
       await client.query('COMMIT');
 
       return {
-        message: 'Caja cerrada correctamente',
-        saldoCobrador: nuevoSaldoCobrador,
-        saldoAdmin: nuevoSaldoAdmin,
-        transferido: montoTransferido
+        message: 'Caja cerrada correctamente'
       };
     } catch (error) {
       await client.query('ROLLBACK');
@@ -200,24 +206,91 @@ const Caja = {
     }
   },
 
-  getByCajaAndFecha: async (cajaId, fechaInicio, fechaFin, limit, offset) => {
+  bloquearCaja: async (cajaId, estado) => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+
+      // 1️⃣ Bloquear caja de la ruta
+      await client.query(
+        `UPDATE cajas SET estado = $2, "updatedAt" = NOW() WHERE id = $1`,
+        [cajaId, estado]
+      );
+
+      await client.query('COMMIT');
+
+      return {
+        message: 'Caja bloqueada correctamente'
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  abrirCaja: async (cajaId, userId) => {
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+      let montoInicial = 0
+      const turnoAnterior = await client.query(
+        `SELECT *
+          FROM turnos
+          WHERE "caja_id" = $1 AND fecha_cierre IS NOT NULL
+          ORDER BY fecha_cierre DESC
+          LIMIT 1;
+        `,
+        [cajaId]
+      );
+
+      montoInicial = montoInicial + turnoAnterior?.rows[0]?.monto_final
+
+      // 1️⃣ Abrir caja de la ruta
+      await client.query(
+        `UPDATE cajas SET estado = 'abierta', "updatedAt" = NOW() WHERE id = $1`,
+        [cajaId]
+      );
+      //Crear el turno
+      await client.query(
+        `INSERT INTO turnos (
+          "caja_id", "usuario_open", "fecha_apertura", "monto_inicial", "observaciones_apertura"
+        )
+        VALUES ($1, $2, NOW(), $3, $4)
+        RETURNING *;`,
+        [cajaId, userId, montoInicial, 'observacion']
+      );
+
+      await client.query('COMMIT');
+
+      return {
+        message: 'Caja abierta correctamente'
+      };
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  getMovimientosByTurno: async (turnoId, limit, offset) => {
     const query = `
       SELECT * FROM movimientos_caja
-      WHERE "cajaId" = $1
-      AND "createdAt" BETWEEN $2 AND $3
+      WHERE "turnoId" = $1
       ORDER BY "createdAt" DESC
-      LIMIT $4 OFFSET $5;
+      LIMIT $2 OFFSET $3;
     `;
 
-    const values = [cajaId, fechaInicio, fechaFin, limit, offset];
+    const values = [turnoId, limit, offset];
     const result = await pool.query(query, values);
 
     const countQuery = `
       SELECT COUNT(*) FROM movimientos_caja
-      WHERE "cajaId" = $1
-      AND "createdAt" BETWEEN $2 AND $3;
+      WHERE "turnoId" = $1
     `;
-    const countResult = await pool.query(countQuery, [cajaId, fechaInicio, fechaFin]);
+    const countResult = await pool.query(countQuery, [turnoId]);
     const total = Number(countResult.rows[0].count);
     const totalPages = Math.ceil(total / limit);
 
@@ -246,7 +319,7 @@ const Caja = {
       // 🔍 Validar hora máxima si es cobrador
       if (userRole === 'cobrador') {
         const configResult = await client.query(
-          'SELECT hora_gastos FROM configuracion_gastos LIMIT 1'
+          'SELECT hora_gastos FROM config_caja WHERE id=1 LIMIT 1'
         );
   
         if (configResult.rowCount === 0) {
@@ -264,7 +337,7 @@ const Caja = {
   
       // 🟡 Obtener la caja del usuario
       const cajaResult = await client.query(
-        'SELECT id, "saldoActual", estado FROM cajas WHERE "rutaId" = $1 LIMIT 1',
+        'SELECT id, "saldoActual", estado FROM cajas WHERE "rutaId"=$1 LIMIT 1',
         [ruta[0].id]
       );
   
@@ -274,6 +347,12 @@ const Caja = {
   
       if (cajaResult.rows[0].estado === 'cerrada') {
         throw new Error('La caja está cerrada.');
+      }
+
+      const turno = await Caja.getTurnoById(cajaResult.rows[0].id)
+
+      if (turno.rowCount === 0) {
+        throw new Error('No no tienes un turno activo');
       }
   
       const cajaId = cajaResult.rows[0].id;
@@ -288,12 +367,12 @@ const Caja = {
       const insertEgresoQuery = `
         INSERT INTO egresos (
           monto, descripcion, estado, "cajaId", "gastoCategoryId",
-          "user_created_id", "user_aproved_id", foto, "createdAt", "updatedAt"
+          "user_created_id", "user_aproved_id", foto, turno_id, "createdAt", "updatedAt"
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NOW(), NOW())
         RETURNING *;
       `;
-      const egresoValues = [monto, descripcion, estado, cajaId, gastoCategoryId, userId, aprovedId, foto];
+      const egresoValues = [monto, descripcion, estado, cajaId, gastoCategoryId, userId, aprovedId, foto, turno.id];
       const egresoResult = await client.query(insertEgresoQuery, egresoValues);
       const egreso = egresoResult.rows[0];
   
@@ -305,9 +384,9 @@ const Caja = {
         const insertMovimientoCajaQuery = `
           INSERT INTO movimientos_caja (
             "cajaId", descripcion, saldo, saldo_anterior, "createdAt", "updatedAt",
-            monto, tipo, "usuarioId", category
+            monto, tipo, "usuarioId", category, "turnoId"
           )
-          VALUES ($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7, $8);
+          VALUES ($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7, $8, $9);
         `;
   
         const movimientoValues = [
@@ -318,7 +397,8 @@ const Caja = {
           monto,
           'gasto',
           userId,
-          'egreso'
+          'egreso',
+          turno.id
         ];
   
         await client.query(insertMovimientoCajaQuery, movimientoValues);
@@ -343,6 +423,175 @@ const Caja = {
       client.release();
     }
   },
+
+  createEgresoAdm: async ({ monto, descripcion, cajaId, aprovedId, gastoCategoryId, turnoId}) => {
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+  
+      // 🟡 Obtener la caja
+      const cajaResult = await client.query(
+        'SELECT id, "saldoActual", estado FROM cajas WHERE id = $1 LIMIT 1',
+        [cajaId]
+      );
+  
+      if (cajaResult.rowCount === 0) {
+        throw new Error('La caja no existe');
+      }
+  
+      if (cajaResult.rows[0].estado === 'cerrada') {
+        throw new Error('La caja está cerrada.');
+      }
+
+      const saldoActual = parseFloat(cajaResult.rows[0].saldoActual);
+  
+      // 🧮 Verificar saldo si es aprobado
+      if (monto > saldoActual) {
+        throw new Error('Saldo insuficiente en caja para realizar el egreso');
+      }
+  
+      // 🟢 Insertar egreso
+      const insertEgresoQuery = `
+        INSERT INTO egresos (
+          monto, descripcion, estado, "cajaId", "gastoCategoryId",
+          "user_created_id", "user_aproved_id", turno_id, "createdAt", "updatedAt"
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+        RETURNING *;
+      `;
+      const egresoValues = [monto, descripcion, 'aprobado', cajaId, gastoCategoryId, aprovedId, aprovedId, turnoId];
+      const egresoResult = await client.query(insertEgresoQuery, egresoValues);
+      const egreso = egresoResult.rows[0];
+  
+      // ✅ Registrar movimiento
+      const saldoAnterior = saldoActual;
+      const nuevoSaldo = saldoAnterior - monto;
+
+      const insertMovimientoCajaQuery = `
+        INSERT INTO movimientos_caja (
+          "cajaId", descripcion, saldo, saldo_anterior, "createdAt", "updatedAt",
+          monto, tipo, "usuarioId", category, "egresoId", "turnoId"
+        )
+        VALUES ($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7, $8, $9, $10);
+      `;
+
+      const movimientoValues = [
+        cajaId,
+        descripcion,
+        nuevoSaldo,
+        saldoAnterior,
+        monto,
+        'gasto',
+        aprovedId,
+        'egreso',
+        egreso.id,
+        turnoId
+      ];
+
+      await client.query(insertMovimientoCajaQuery, movimientoValues);
+
+      // 📉 Actualizar saldo
+      const updateSaldoQuery = `
+        UPDATE cajas
+        SET "saldoActual" = $1,
+            "updatedAt" = NOW()
+        WHERE id = $2;
+      `;
+      await client.query(updateSaldoQuery, [nuevoSaldo, cajaId]);
+  
+      await client.query('COMMIT');
+      return egreso;
+  
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
+
+  createIngresoAdm: async ({ monto, descripcion, cajaId, aprovedId, ingresoCategoryId, turnoId}) => {
+
+    const client = await pool.connect();
+    try {
+      await client.query('BEGIN');
+  
+      // 🟡 Obtener la caja
+      const cajaResult = await client.query(
+        'SELECT id, "saldoActual", estado FROM cajas WHERE id = $1 LIMIT 1',
+        [cajaId]
+      );
+  
+      if (cajaResult.rowCount === 0) {
+        throw new Error('La caja no existe');
+      }
+  
+      if (cajaResult.rows[0].estado === 'cerrada') {
+        throw new Error('La caja está cerrada.');
+      }
+
+      const saldoActual = parseFloat(cajaResult.rows[0].saldoActual);
+  
+      // 🟢 Insertar ingreso
+      const insertIngresoQuery = `
+        INSERT INTO ingresos (
+          monto, descripcion, estado, "cajaId", "ingresoCategoryId",
+          "user_created_id", "user_aproved_id", turno_id, "createdAt", "updatedAt"
+        )
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW())
+        RETURNING *;
+      `;
+      const ingresoValues = [monto, descripcion, 'aprobado', cajaId, ingresoCategoryId, aprovedId, aprovedId, turnoId];
+      const ingresoResult = await client.query(insertIngresoQuery, ingresoValues);
+      const ingreso = ingresoResult.rows[0];
+  
+      // ✅ Registrar movimiento
+      const saldoAnterior = saldoActual;
+      const nuevoSaldo = (saldoAnterior + Number(monto));
+
+      const insertMovimientoCajaQuery = `
+        INSERT INTO movimientos_caja (
+          "cajaId", descripcion, saldo, saldo_anterior, "createdAt", "updatedAt",
+          monto, tipo, "usuarioId", category, "ingresoId", "turnoId"
+        )
+        VALUES ($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7, $8, $9, $10);
+      `;
+
+      const movimientoValues = [
+        cajaId,
+        descripcion,
+        nuevoSaldo,
+        saldoAnterior,
+        monto,
+        'ingreso',
+        aprovedId,
+        'ingreso',
+        ingreso.id,
+        turnoId
+      ];
+
+      await client.query(insertMovimientoCajaQuery, movimientoValues);
+
+      // 📉 Actualizar saldo
+      const updateSaldoQuery = `
+        UPDATE cajas
+        SET "saldoActual" = $1,
+            "updatedAt" = NOW()
+        WHERE id = $2;
+      `;
+      await client.query(updateSaldoQuery, [nuevoSaldo, cajaId]);
+  
+      await client.query('COMMIT');
+      return ingreso;
+  
+    } catch (error) {
+      await client.query('ROLLBACK');
+      throw error;
+    } finally {
+      client.release();
+    }
+  },
        
   aprobarEgreso : async (egresoId, userId) => {
     const client = await pool.connect();
@@ -358,13 +607,63 @@ const Caja = {
       `;
       const result = await client.query(updateQuery, [userId, egresoId]);
       const egreso = result.rows[0];
+
+      // 🟡 Obtener la caja
+      const cajaResult = await client.query(
+        'SELECT id, "saldoActual", estado FROM cajas WHERE id = $1 LIMIT 1',
+        [egreso.cajaId]
+      );
+  
+      if (cajaResult.rowCount === 0) {
+        throw new Error('La caja no existe');
+      }
+  
+      if (cajaResult.rows[0].estado === 'cerrada') {
+        throw new Error('La caja está cerrada.');
+      }
+
+      const saldoActual = parseFloat(cajaResult.rows[0].saldoActual);
+  
+      // 🧮 Verificar saldo si es aprobado
+      if (egreso.monto > saldoActual) {
+        throw new Error('Saldo insuficiente en caja para realizar el egreso');
+      }
   
       // Registrar movimiento en caja
-      const insertMovimientoQuery = `
-        INSERT INTO movimientos ("cajaId", tipo, monto, descripcion, origen, "createdAt", "updatedAt")
-        VALUES ($1, 'egreso', $2, $3, 'egreso', NOW(), NOW());
+      const saldoAnterior = saldoActual;
+      const nuevoSaldo = saldoAnterior - egreso.monto;
+
+      const insertMovimientoCajaQuery = `
+        INSERT INTO movimientos_caja (
+          "cajaId", descripcion, saldo, saldo_anterior, "createdAt", "updatedAt",
+          monto, tipo, "usuarioId", category, "egresoId", "turnoId"
+        )
+        VALUES ($1, $2, $3, $4, NOW(), NOW(), $5, $6, $7, $8, $9, $10);
       `;
-      await client.query(insertMovimientoQuery, [egreso.cajaId, egreso.monto, egreso.descripcion]);
+
+      const movimientoValues = [
+        egreso.cajaId,
+        egreso.descripcion,
+        nuevoSaldo,
+        saldoAnterior,
+        egreso.monto,
+        'gasto',
+        userId,
+        'egreso',
+        egreso.id,
+        egreso.turno_id
+      ];
+
+      await client.query(insertMovimientoCajaQuery, movimientoValues);
+
+      // 📉 Actualizar saldo
+      const updateSaldoQuery = `
+        UPDATE cajas
+        SET "saldoActual" = $1,
+            "updatedAt" = NOW()
+        WHERE id = $2;
+      `;
+      await client.query(updateSaldoQuery, [nuevoSaldo, egreso.cajaId]);
   
       await client.query('COMMIT');
       return egreso;
@@ -498,6 +797,312 @@ const Caja = {
       }
     };
   }, 
+
+  getEgresosByTurno: async (turnoId, limit, offset) => {
+    try {
+      const res = await pool.query(`
+        SELECT 
+          e.*, 
+          cec.nombre AS categoria_nombre,
+          uc.nombre AS usuario_creador_nombre,
+          ur.nombre AS usuario_rechazo_nombre,
+          ua.nombre AS usuario_aprobador_nombre
+        FROM egresos e
+        LEFT JOIN config_egresos_category cec ON e."gastoCategoryId" = cec.id
+        LEFT JOIN usuarios uc ON e.user_created_id = uc.id
+        LEFT JOIN usuarios ur ON e.user_rejected_id = ur.id
+        LEFT JOIN usuarios ua ON e.user_aproved_id = ua.id
+        WHERE e.turno_id = $1
+        ORDER BY e."createdAt" DESC
+        LIMIT $2 OFFSET $3
+      `, [turnoId, limit, offset]);
+
+      const countQuery = `
+        SELECT COUNT(*) FROM egresos
+        WHERE turno_id = $1
+      `;
+      const countResult = await pool.query(countQuery, [turnoId]);
+      const total = Number(countResult.rows[0].count);
+      const totalPages = Math.ceil(total / limit);
+  
+      const egresos = res.rows.map(row => {
+        let usuario_estado = null;
+  
+        if (row.estado === 'aprobado') {
+          usuario_estado = {
+            id: row.user_approved_id,
+            nombre: row.usuario_aprobador_nombre
+          };
+        } else if (row.estado === 'rechazado') {
+          usuario_estado = {
+            id: row.user_rejected_id,
+            nombre: row.usuario_rechazo_nombre
+          };
+        }
+  
+        return {
+          id: row.id,
+          monto: row.monto,
+          descripcion: row.descripcion,
+          estado: row.estado,
+          fecha_creacion: row.createdAt,
+          fecha_actualizacion: row.updatedAt,
+          turno_id: row.turno_id,
+          foto: row.foto,
+          gastoCategoryId: row.gastoCategoryId,
+          categoria: {
+            id: row.gastoCategoryId,
+            nombre: row.categoria_nombre
+          },
+          creado_por: {
+            id: row.user_created_id,
+            nombre: row.usuario_creador_nombre
+          },
+          usuario_estado
+        };
+      });
+  
+      return {
+        data: egresos,
+        total,
+        totalPages
+      };
+    } catch (error) {
+      throw error;
+    }
+  },
+  
+  getAbonosByTurno: async (turnoId, limit, offset) => {
+    try {
+      const result = await pool.query(`
+        SELECT 
+          p.*, 
+          c.nombres AS nombre
+        FROM pagos p
+        LEFT JOIN clientes c ON p.cliente_id = c.id
+        WHERE p.turno_id = $1 AND p.tipo = 'abono'
+        ORDER BY p."createdAt" DESC
+        LIMIT $2 OFFSET $3
+      `, [turnoId, limit, offset]);
+
+    const countQuery = `
+      SELECT COUNT(*) FROM pagos
+      WHERE turno_id = $1 AND tipo = 'abono'
+    `;
+    const countResult = await pool.query(countQuery, [turnoId]);
+    const total = Number(countResult.rows[0].count);
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      data: result.rows,
+      total,
+      totalPages
+    };
+
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  getValidAbonosByTurno: async (turnoId, limit, offset) => {
+    try {
+      const result = await pool.query(`
+        SELECT 
+          p.*, 
+          c.nombres AS nombre
+        FROM pagos p
+        LEFT JOIN clientes c ON p.cliente_id = c.id
+        WHERE p.turno_id = $1 AND p.tipo = 'abono' AND p.estado = 'aprobado'
+        ORDER BY p."createdAt" DESC
+        LIMIT $2 OFFSET $3
+      `, [turnoId, limit, offset]);
+
+    const countQuery = `
+      SELECT COUNT(*) FROM pagos
+      WHERE turno_id = $1 AND tipo = 'abono' AND estado = 'aprobado'
+    `;
+    const countResult = await pool.query(countQuery, [turnoId]);
+    const total = Number(countResult.rows[0].count);
+    const totalPages = Math.ceil(total / limit);
+
+    return {
+      data: result.rows,
+      total,
+      totalPages
+    };
+
+    } catch (error) {
+      throw error;
+    }
+  },
+
+  anularPago: async (pagoId, userId, motivo) => {
+    const client = await pool.connect();
+  
+    try {
+      await client.query('BEGIN');
+  
+      // 1. Obtener desglose del pago
+      const pagoRes = await client.query(`
+        SELECT p.monto, p.turno_id, p."user_created_id", p."cliente_id", c."creditoId",
+               pc."cuotaId", pc.monto_abonado, pc.capital_pagado, pc.interes_pagado
+        FROM pagos p
+        JOIN pagos_cuotas pc ON pc."pagoId" = p.id
+        JOIN cuotas c ON c.id = pc."cuotaId"
+        WHERE p.id = $1
+      `, [pagoId]);
+  
+      if (pagoRes.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return { error: 'Pago no encontrado o no asociado a cuotas' };
+      }
+  
+      let totalCapitalAjustar = 0;
+      let totalInteresAjustar = 0;
+      const cuotasMap = new Map();
+      let clienteId = null;
+      let creditoId = null;
+      let turnoId = null;
+      let montoPago = 0;
+  
+      for (const row of pagoRes.rows) {
+        const cuotaId = row.cuotaId;
+        const capitalPagado = parseFloat(row.capital_pagado || 0);
+        const interesPagado = parseFloat(row.interes_pagado || 0);
+        const montoAbonado = parseFloat(row.monto_abonado || 0);
+  
+        totalCapitalAjustar += capitalPagado;
+        totalInteresAjustar += interesPagado;
+        cuotasMap.set(cuotaId, (cuotasMap.get(cuotaId) || 0) + montoAbonado);
+  
+        clienteId = row.cliente_id;
+        creditoId = row.creditoId;
+        turnoId = row.turno_id;
+        montoPago = parseFloat(row.monto || 0);
+      }
+  
+      // 2. Revertir montos en cuotas
+      for (const [cuotaId, montoAbonado] of cuotasMap.entries()) {
+        await client.query(`
+          UPDATE cuotas
+          SET monto_pagado = monto_pagado - $1,
+              estado = CASE WHEN monto_pagado - $1 < monto THEN 'impago' ELSE estado END,
+              "updatedAt" = NOW()
+          WHERE id = $2
+        `, [montoAbonado, cuotaId]);
+      }
+  
+      // 3. Actualizar crédito
+      const creditoRes = await client.query(`
+        SELECT saldo_capital, saldo_interes, capital_pagado, interes_pagado
+        FROM creditos
+        WHERE id = $1
+      `, [creditoId]);
+  
+      if (creditoRes.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return { error: 'Crédito no encontrado' };
+      }
+  
+      const cr = creditoRes.rows[0];
+      const nuevoSaldoCapital = Math.max(0, parseFloat(cr.saldo_capital) + totalCapitalAjustar);
+      const nuevoSaldoInteres = Math.max(0, parseFloat(cr.saldo_interes) + totalInteresAjustar);
+      const nuevoCapitalPagado = Math.max(0, parseFloat(cr.capital_pagado) - totalCapitalAjustar);
+      const nuevoInteresPagado = Math.max(0, parseFloat(cr.interes_pagado) - totalInteresAjustar);
+  
+      const estadoCredito = (nuevoSaldoCapital > 0 || nuevoSaldoInteres > 0) ? 'impago' : 'pagado';
+  
+      await client.query(`
+        UPDATE creditos
+        SET saldo_capital = $1,
+            saldo_interes = $2,
+            capital_pagado = $3,
+            interes_pagado = $4,
+            estado = $5,
+            "updatedAt" = NOW()
+        WHERE id = $6
+      `, [
+        nuevoSaldoCapital,
+        nuevoSaldoInteres,
+        nuevoCapitalPagado,
+        nuevoInteresPagado,
+        estadoCredito,
+        creditoId
+      ]);
+  
+      // 4. Actualizar saldo en caja
+      const cajaRes = await client.query(`
+        SELECT c.id, c."saldoActual"
+        FROM cajas c
+        JOIN ruta r ON r.id = c."rutaId"
+        WHERE r."userId" = $1
+        LIMIT 1
+      `, [pagoRes.rows[0].user_created_id]);
+  
+      if (cajaRes.rowCount === 0) {
+        await client.query('ROLLBACK');
+        return { error: 'Caja no encontrada' };
+      }
+  
+      const cajaId = cajaRes.rows[0].id;
+      const saldoAnterior = parseFloat(cajaRes.rows[0].saldoActual);
+      const nuevoSaldo = saldoAnterior - montoPago;
+  
+      await client.query(`
+        UPDATE cajas
+        SET "saldoActual" = $1,
+            "updatedAt" = NOW()
+        WHERE id = $2
+      `, [nuevoSaldo, cajaId]);
+  
+      // 5. Eliminar pagos_cuotas
+      await client.query(`
+        DELETE FROM pagos_cuotas
+        WHERE "pagoId" = $1
+      `, [pagoId]);
+  
+      // 6. Registrar movimiento de anulación
+      await client.query(`
+        INSERT INTO movimientos_caja (
+          "cajaId", descripcion, saldo, saldo_anterior, "createdAt", "updatedAt",
+          monto, tipo, "usuarioId", category, "clienteId", "creditoId", "turnoId"
+        ) VALUES (
+          $1, $2, $3, $4, NOW(), NOW(),
+          $5, 'anulacion', $6, 'egreso', $7, $8, $9
+        )
+      `, [
+        cajaId,
+        `Anulación de pago ID ${pagoId} - Motivo: ${motivo || 'No especificado'}`,
+        nuevoSaldo,
+        saldoAnterior,
+        -montoPago,
+        userId,
+        clienteId,
+        creditoId,
+        turnoId
+      ]);
+  
+      // 7. Marcar pago como anulado
+      await client.query(`
+        UPDATE pagos
+        SET estado = 'anulado',
+            user_null_id = $2,
+            observacion = $3,
+            "updatedAt" = NOW()
+        WHERE id = $1
+      `, [pagoId, userId, motivo]);
+  
+      await client.query('COMMIT');
+      return { success: true, message: 'Pago anulado correctamente' };
+  
+    } catch (err) {
+      await client.query('ROLLBACK');
+      console.error(err);
+      return { error: 'Error al anular el pago' };
+    } finally {
+      client.release();
+    }
+  },            
 
   getAllEgresos: async (offset, limit, userId, oficinaId, rutaId, searchTerm = '') => {
     const search = `%${searchTerm}%`;
@@ -664,7 +1269,26 @@ const Caja = {
     } finally {
       client.release();
     }
-  }  
+  },
+
+  getComprobanteById: async (id) => {
+    const pagoData = await pool.query(
+      `SELECT 
+        p.*, 
+        c.nombres AS nombre
+       FROM pagos p
+       LEFT JOIN clientes c ON p.cliente_id = c.id
+       WHERE p.id = $1 LIMIT 1`,
+      [id]
+    );
+  
+    if (pagoData.rowCount === 0) {
+      return null;
+    }
+  
+    return pagoData.rows[0]; // solo devuelves los datos
+  }
+  
   
 };
 

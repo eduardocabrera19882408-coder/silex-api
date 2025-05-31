@@ -52,7 +52,8 @@ const getConfigDefault = catchError(async (req, res) => {
 const updateConfigCaja = catchError(async (req, res) => {
   const timeClose = req.body.hora_cierre_caja
   const timeOpen = req.body.hora_apertura_caja
-  const config = await Config.updateConfigCaja(timeClose, timeOpen);
+  const timeGasto = req.body.hora_gastos
+  const config = await Config.updateConfigCaja(timeClose, timeOpen, timeGasto);
   return res.status(200).json(config);
 });
 

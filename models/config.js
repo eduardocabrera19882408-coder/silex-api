@@ -71,10 +71,10 @@ const Config = {
   },
 
    // Actualizar una categoría de egreso
-   updateConfigCaja: async (timeClose, timeOpen) => {
+   updateConfigCaja: async (timeClose, timeOpen, timeGasto) => {
     try {
-      const query = 'UPDATE config_Caja SET hora_cierre_caja = $1, hora_apertura_caja = $2 WHERE id = 1 RETURNING *';
-      const values = [timeClose, timeOpen];
+      const query = 'UPDATE config_Caja SET hora_cierre_caja = $1, hora_apertura_caja = $2, hora_gastos = $3 WHERE id = 1 RETURNING *';
+      const values = [timeClose, timeOpen, timeGasto];
       const res = await pool.query(query, values);
       return res.rows[0];
     } catch (error) {

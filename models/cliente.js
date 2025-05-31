@@ -30,8 +30,8 @@ const Cliente = {
   
       // 1️⃣ Insertar el cliente
       const insertClienteQuery = `
-        INSERT INTO clientes (nombres, telefono, direccion, "coordenadasCasa", "coordenadasCobro", identificacion, estado, "rutaId", nacionalidad, "userId_create", "createdAt", "updatedAt")
-        VALUES ($1, $2, $3, $4, $5, $6, 'activo', $7, $8, $9, NOW(), NOW())
+        INSERT INTO clientes (nombres, telefono, direccion, "coordenadasCasa", "coordenadasCobro", identificacion, estado, "rutaId", nacionalidad, "userId_create", buro, updated, "createdAt", "updatedAt")
+        VALUES ($1, $2, $3, $4, $5, $6, 'activo', $7, $8, $9, 400, true, NOW(), NOW())
         RETURNING id;
       `;
       const clienteValues = [nombres, telefono, direccion, coordenadasCasa, coordenadasCobro, identificacion, rutaId, nacionalidad[0], userId];
@@ -95,12 +95,12 @@ const Cliente = {
     let queryText = `
       SELECT 
         c.id, c.nombres, c.identificacion, c.nacionalidad, c.estado, c.telefono, c.direccion, 
-        c."coordenadasCasa", c."coordenadasCobro",
+        c."coordenadasCasa", c."coordenadasCobro", c.buro,
         r.id AS ruta_id, r.nombre AS ruta_nombre
       FROM clientes c
       LEFT JOIN ruta r ON c."rutaId" = r.id
     `;
-
+ 
     let params = [];
     let filters = [];
 
@@ -214,7 +214,7 @@ const Cliente = {
   
       // Pagos de cada cuota
       for (let cuota of cuotas) {
-        const pagosQuery = 'SELECT * FROM pagos WHERE "cuotaId" = $1;';
+        const pagosQuery = 'SELECT * FROM pagos_cuotas WHERE "cuotaId" = $1;';
         const pagosResult = await db.query(pagosQuery, [cuota.id]);
         cuota.pagos = pagosResult.rows;
       }
@@ -224,6 +224,18 @@ const Cliente = {
   
     // 5. Adjuntar créditos al cliente
     cliente.creditos = creditos;
+  
+    return cliente;
+  },  
+
+   // Obtener un cliente por su ID
+   getNameById: async (id) => {
+    // 1. Obtener cliente
+    const clienteQuery = 'SELECT nombres FROM clientes WHERE id = $1;';
+    const clienteResult = await db.query(clienteQuery, [id]);
+    const cliente = clienteResult.rows[0];
+  
+    if (!cliente) return null;
   
     return cliente;
   },  

@@ -52,7 +52,6 @@ function verificarCI (dni){
         if (provinceCode > 24 && provinceCode != 30){
             return false //`La cédula es incorrecta no pertenece a ninguna provincia`
         }
-        console.log('Codigo de Provincia: ' + provinceCode);
 
         if(validatorDigit == lastDigit){
             return true //`Esta cédula es correcta: ${dni}`

@@ -330,6 +330,7 @@ const Ruta = {
     };
   },
 
+  // Ruta del cobrador
   getRutaPorUsuarioId: async (usuarioId) => {
     const query = `
       SELECT 
@@ -350,54 +351,51 @@ const Ruta = {
           cu."fechaPago",
           cu.monto_pagado
         FROM cuotas cu
+        LEFT JOIN (
+          SELECT 
+            pc."cuotaId", 
+            SUM(pc.monto_abonado) AS total_abonado
+          FROM pagos_cuotas pc
+          JOIN pagos pa ON pa.id = pc."pagoId"
+          WHERE pa."createdAt"::date = CURRENT_DATE
+          GROUP BY pc."cuotaId"
+        ) pagos_dia ON pagos_dia."cuotaId" = cu.id
         WHERE 
-          (
-            cu."fechaPago"::date = CURRENT_DATE
-            OR (
-              cu."fechaPago"::date < CURRENT_DATE
-              AND cu.estado != 'pagado'
-              AND NOT EXISTS (
-                SELECT 1
-                FROM pagos_cuotas pc
-                JOIN pagos pa ON pa.id = pc."pagoId"
-                WHERE pc."cuotaId" = cu.id 
-                  AND pa."createdAt"::date = CURRENT_DATE
-                GROUP BY pc."cuotaId"
-                HAVING SUM(pc.monto_abonado) >= cu.monto
-              )
-            )
-          )
+          cu."fechaPago"::date <= CURRENT_DATE
+          AND cu.estado != 'pagado'
+          AND (pagos_dia.total_abonado IS NULL OR pagos_dia.total_abonado < cu.monto)
         ORDER BY cu."creditoId", 
-                 CASE 
-                   WHEN cu."fechaPago"::date < CURRENT_DATE THEN 0
-                   ELSE 1
-                 END, 
-                 cu."fechaPago"
+                CASE 
+                  WHEN cu."fechaPago"::date < CURRENT_DATE THEN 0
+                  ELSE 1
+                END, 
+                cu."fechaPago"
       ) cuota_pendiente ON cuota_pendiente."creditoId" = cr.id
       LEFT JOIN (
         SELECT 
           cu."creditoId",
           COUNT(*) AS "cuotasAtrasadas"
         FROM cuotas cu
+        LEFT JOIN (
+          SELECT 
+            pc."cuotaId", 
+            SUM(pc.monto_abonado) AS total_abonado
+          FROM pagos_cuotas pc
+          JOIN pagos pa ON pa.id = pc."pagoId"
+          WHERE pa."createdAt"::date = CURRENT_DATE
+          GROUP BY pc."cuotaId"
+        ) pagos_dia ON pagos_dia."cuotaId" = cu.id
         WHERE cu."fechaPago"::date < CURRENT_DATE 
           AND cu.estado != 'pagado'
-          AND NOT EXISTS (
-            SELECT 1
-            FROM pagos_cuotas pc
-            JOIN pagos pa ON pa.id = pc."pagoId"
-            WHERE pc."cuotaId" = cu.id 
-              AND pa."createdAt"::date = CURRENT_DATE
-            GROUP BY pc."cuotaId"
-            HAVING SUM(pc.monto_abonado) >= cu.monto
-          )
+          AND (pagos_dia.total_abonado IS NULL OR pagos_dia.total_abonado < cu.monto)
         GROUP BY cu."creditoId"
       ) atrasadas ON atrasadas."creditoId" = cr.id
       WHERE cr."usuarioId" = $1
       GROUP BY cl.id, cr.id, cuota_pendiente.monto, cuota_pendiente."fechaPago", cuota_pendiente.monto_pagado;
     `;
-  
+
     const { rows } = await db.query(query, [usuarioId]);
-  
+
     return rows
       .map(row => ({
         lat: row.lat,
@@ -410,7 +408,7 @@ const Ruta = {
         creditoId: row.creditoId
       }))
       .filter(cliente => cliente.cuota > 0 || cliente.cuotasAtrasadas > 0);
-  },    
+  },
 
   // Eliminar una ruta y su relación en usuariorutas + eliminar configuración de crédito
   delete: async (id) => {
