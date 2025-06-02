@@ -1,5 +1,5 @@
 const Usuario = require('../models/usuario');
-const Permiso = require('../models/permiso')
+const Permiso = require('../models/permiso');
 const jwt = require('jsonwebtoken');
 
 const login = async (req, res) => {

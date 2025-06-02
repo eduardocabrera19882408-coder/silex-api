@@ -34,9 +34,16 @@ app.use(express.urlencoded({ limit: "10mb", extended: true }));
 app.use(helmet({
     crossOriginResourcePolicy: false,
 }));
+const allowedOrigins = ['https://autentic.ec', 'http://localhost:3000'];
+
 app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE'],
+  origin: function (origin, callback) {
+    if (!origin || allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true,
 }));
 
