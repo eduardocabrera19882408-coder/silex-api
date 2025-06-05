@@ -36,7 +36,7 @@ app.use(helmet({
 }));
 
 // Lista de orígenes permitidos
-const allowedOrigins = ['https://autentic.ec', 'https://api.autentic.ec', 'http://localhost:5173'];
+const allowedOrigins = ['https://autentic.ec', 'https://app.autentic.ec', 'http://localhost:5173'];
 
 app.use(cors({
   origin: function (origin, callback) {
