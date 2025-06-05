@@ -34,10 +34,21 @@ app.use(express.urlencoded({ limit: "10mb", extended: true }));
 app.use(helmet({
     crossOriginResourcePolicy: false,
 }));
+
+// Lista de orígenes permitidos
+const allowedOrigins = ['https://autentic.ec', 'https://api.autentic.ec'];
+
 app.use(cors({
-  origin: '*',
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH'],
-  // credentials: true,
+  origin: function (origin, callback) {
+    // Permitir requests sin origin (como en curl o servidores internos)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      return callback(new Error('No permitido por CORS'));
+    }
+  },
+  credentials: true // si usas cookies o auth headers
 }));
 
 // Middleware para procesar JSON
