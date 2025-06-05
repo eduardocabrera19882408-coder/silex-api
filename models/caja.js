@@ -796,9 +796,10 @@ const Caja = {
         totalPages: Math.ceil(total / limit)
       }
     };
-  }, 
+  },
 
   getEgresosByTurno: async (turnoId, limit, offset) => {
+    console.log(turnoId)
     try {
       const res = await pool.query(`
         SELECT 
@@ -825,7 +826,7 @@ const Caja = {
       const total = Number(countResult.rows[0].count);
       const totalPages = Math.ceil(total / limit);
   
-      const egresos = res.rows.map(row => {
+      const egresos = res?.rows?.map(row => {
         let usuario_estado = null;
   
         if (row.estado === 'aprobado') {

@@ -20,12 +20,10 @@ const Producto = {
   getAll: async (page, limit, offset) => {
     const queryText = `SELECT * FROM productos ORDER BY id LIMIT $1 OFFSET $2;`;
     const result = await db.query(queryText, [parseInt(limit), parseInt(offset)]);
-    console.log(result)
 
     // Obtener el total de productos
     const countQuery = `SELECT COUNT(*) AS total FROM productos;`;
     const countRows = await db.query(countQuery);
-    console.log(countRows)
     const total = Number(countRows.rows[0].total);
     const totalPages = Math.ceil(total / limit);
 
@@ -64,7 +62,6 @@ const Producto = {
     const values = [updateData.nombre, updateData.precio, updateData.stock, id];
     await db.query(queryText, values);
     const producto = await Producto.getById(id);
-    console.log(producto)
     return producto;
   },
 

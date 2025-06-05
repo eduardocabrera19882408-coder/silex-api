@@ -316,7 +316,7 @@ const listarEgresos = catchError(async (req, res) => {
 
   const data = await Caja.listarEgresos(cajaId, filtros, page, limit);
   return res.status(200).json(data);
-}); 
+});
 
 // Función para obtener los egresos listados por id de turno
 const getEgresosByTurno = catchError(async (req, res) => {

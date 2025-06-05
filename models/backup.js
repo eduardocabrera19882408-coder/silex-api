@@ -318,12 +318,13 @@ const Backup = {
                 await client.query(`
                   UPDATE cajas SET "saldoActual" = $1, "updatedAt" = NOW() WHERE id = $2
                 `, [nuevoSaldo, caja.id]);
+
                 await client.query(`
                   INSERT INTO movimientos_caja (
                     "cajaId", descripcion, saldo, "saldo_anterior", "createdAt", "updatedAt",
-                    monto, tipo, "usuarioId", category
+                    monto, tipo, "usuarioId", category, "turnoId"
                   )
-                  VALUES ($1, $2, $3, $4, $5, $5, $6, 'ingreso', $7, 'ingreso')
+                  VALUES ($1, $2, $3, $4, $5, $5, $6, 'ingreso', $7, 'ingreso', $8)
                 `, [
                   caja.id,
                   tx.concepto,
@@ -331,7 +332,8 @@ const Backup = {
                   saldoActualCaja,
                   timestamp,
                   monto,
-                  tx.user_create
+                  tx.user_create,
+                  turno.id
                 ]);
                 saldoActualCaja = nuevoSaldo;
               }
@@ -362,12 +364,13 @@ const Backup = {
                 await client.query(`
                   UPDATE cajas SET "saldoActual" = $1, "updatedAt" = NOW() WHERE id = $2
                 `, [nuevoSaldo, caja.id]);
+
                 await client.query(`
                   INSERT INTO movimientos_caja (
                     "cajaId", descripcion, saldo, "saldo_anterior", "createdAt", "updatedAt",
-                    monto, tipo, "usuarioId", category
+                    monto, tipo, "usuarioId", category, "turnoId"
                   )
-                  VALUES ($1, $2, $3, $4, $5, $5, $6, 'egreso', $7, 'egreso')
+                  VALUES ($1, $2, $3, $4, $5, $5, $6, 'egreso', $7, 'egreso', $8)
                 `, [
                   caja.id,
                   tx.concepto,
@@ -375,38 +378,13 @@ const Backup = {
                   saldoActualCaja,
                   timestamp,
                   monto,
-                  tx.user_create
+                  tx.user_create,
+                  turno.id
                 ]);
                 saldoActualCaja = nuevoSaldo;
               }
             }
-          }          
-          //else if (tx.tipo === 'EGRESO') {
-          //   // Egreso simple
-          //   await client.query(`
-          //     INSERT INTO egresos (ruta, categoria, concepto, observacion, valor, fecha, usuario)
-          //     VALUES ($1, $2, $3, $4, $5, $6, $7)
-          //   `, [
-          //     tx.ruta,
-          //     tx.categoria,
-          //     tx.concepto,
-          //     tx.observacion,
-          //     tx.valor,
-          //     timestamp,
-          //     tx.user_auth || tx.user_create
-          //   ]);
-  
-          //   await client.query(`
-          //     INSERT INTO movimientos (tipo, ruta, valor, fecha, descripcion, created_at)
-          //     VALUES ('EGRESO', $1, $2, $3, $4, $5)
-          //   `, [
-          //     tx.ruta,
-          //     tx.valor,
-          //     timestamp,
-          //     tx.concepto,
-          //     timestamp
-          //   ]);
-          // }
+          }
     
           await client.query('COMMIT');
           return { success: true };
