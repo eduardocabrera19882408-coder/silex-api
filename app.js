@@ -36,7 +36,7 @@ app.use(helmet({
 }));
 
 // Lista de orígenes permitidos
-const allowedOrigins = ['https://autentic.ec', 'https://api.autentic.ec'];
+const allowedOrigins = ['https://autentic.ec', 'https://api.autentic.ec', 'http://localhost:5173'];
 
 app.use(cors({
   origin: function (origin, callback) {
@@ -48,7 +48,7 @@ app.use(cors({
       return callback(new Error('No permitido por CORS'));
     }
   },
-  credentials: true // si usas cookies o auth headers
+  credentials: false // si usas cookies o auth headers
 }));
 
 // Middleware para procesar JSON
