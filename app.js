@@ -11,7 +11,7 @@ const swaggerUi = require('swagger-ui-express');
 
 // Lista de orígenes permitidos
 // const allowedOrigins = ['http://localhost:5173', 'http://localhost:2222', 'http://192.168.0.118:2222'];
-const allowedOrigins = ['http://localhost:5173', 'http://localhost:2222', 'http://192.168.0.118:2222', 'https://silex-app-cobradores.netlify.app/','https://inspiring-hamster-44b57d.netlify.app/'];
+const allowedOrigins = ['https://silex-app-cobradores.netlify.app','https://inspiring-hamster-44b57d.netlify.app'];
 app.use(cors({
   origin: function (origin, callback) {
     // Permitir requests sin origin (como en curl o servidores internos)
