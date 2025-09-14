@@ -5,8 +5,12 @@ const Caja = require('../models/caja');
 const programarCajasDinamico = () => {
   cron.schedule('* * * * *', async () => {
     try {
-      const now = new Date();
-      const horas = now.toTimeString().slice(0, 5); // HH:MM
+      const horas = new Intl.DateTimeFormat('es-EC', {
+        timeZone: 'America/Guayaquil',
+        hour: '2-digit',
+        minute: '2-digit',
+        hour12: false
+      }).format(new Date());
       const userId = 1; // Usuario del sistema
 
       const config = await pool.query(`
