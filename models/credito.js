@@ -42,7 +42,12 @@ const Credito = {
       }
   
       // 3️⃣ Caja de ruta
-      const cajaResult = await client.query(`SELECT id, "saldoActual" FROM cajas WHERE "rutaId" = $1;`, [rutaId]);
+      const cajaResult = await client.query(`SELECT id, "saldoActual", estado FROM cajas WHERE "rutaId" = $1;`, [rutaId]);
+      if (cajaResult.rows[0].estado === 'cerrada') {
+        await client.query('ROLLBACK');
+        return { error: "La caja está cerrada." };
+      }
+      console.log(cajaResult.rows[0])
       if (cajaResult.rows.length === 0) {
         await client.query('ROLLBACK');
         return { error: "La ruta no tiene una caja asignada." };
@@ -644,7 +649,7 @@ const Credito = {
       }
   
       const cajaRes = await client.query(`
-        SELECT c.id, c."saldoActual"
+        SELECT c.id, c."saldoActual", c.estado
         FROM cajas c
         JOIN ruta r ON r.id = c."rutaId"
         WHERE r."userId" = $1
@@ -652,7 +657,9 @@ const Credito = {
       `, [creadorCreditoId]);
   
       if (cajaRes.rowCount === 0) return { error: 'Caja no encontrada' };
-  
+      if (cajaRes.rows[0].estado === 'cerrada') {
+        return { error: 'La caja está cerrada.' };
+      }
       const turno = await Caja.getTurnoById(cajaRes.rows[0].id);
       if (!turno.id) return { error: 'No tienes un turno activo' };
   
