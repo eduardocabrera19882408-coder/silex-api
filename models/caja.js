@@ -403,8 +403,13 @@ const Caja = {
         }
   
         const horaMaxima = configResult.rows[0].hora_gastos;
-        const ahora = new Date();
-        const horaActual = ahora.toTimeString().split(' ')[0]; // formato HH:MM:SS
+        const horaActual = new Intl.DateTimeFormat('es-EC', {
+          timeZone: 'America/Guayaquil',
+          hour: '2-digit',
+          minute: '2-digit',
+          second: '2-digit',
+          hour12: false
+        }).format(new Date());
   
         if (horaActual > horaMaxima) {
           throw new Error(`No se pueden registrar gastos después de las ${horaMaxima}`);
