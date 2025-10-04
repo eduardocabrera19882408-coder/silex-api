@@ -84,13 +84,14 @@ const getCreditoById = catchError(async (req, res) => {
 
 const getCreditosImpagos = catchError(async (req, res) => {
   const usuarioId = req.user.userId;
+  const search = req.query.search;
   const limit = parseInt(req.query.limit) || 10;
   const page = parseInt(req.query.page) || 1;
   const offset = (page - 1) * limit;
 
   const [creditos, total] = await Promise.all([
-    Credito.getImpagosByUsuarioPaginado(usuarioId, limit, offset),
-    Credito.countImpagosByUsuario(usuarioId),
+    Credito.getImpagosByUsuarioPaginado(usuarioId, limit, offset, search),
+    Credito.countImpagosByUsuario(usuarioId, search),
   ]);
 
   const totalPages = Math.ceil(total / limit);

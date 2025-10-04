@@ -483,8 +483,10 @@ const Credito = {
     return rows.length ? rows[0] : null;
   },
 
-  getImpagosByUsuarioPaginado: async (usuarioId, limit, offset) => {
-    const query = `
+  getImpagosByUsuarioPaginado: async (usuarioId, limit, offset, search = '') => {
+    const searchFilter = search === '' ? null : `%${search}%`;
+
+    let query = `
       SELECT 
         c.*,
         json_build_object(
@@ -558,24 +560,40 @@ const Credito = {
       FROM creditos c
       JOIN clientes cl ON c."clienteId" = cl.id
       JOIN productos p ON c."productoId" = p.id
-      WHERE c."usuarioId" = $1 AND c.estado = 'impago'
-      ORDER BY c."createdAt" DESC
-      LIMIT $2 OFFSET $3;
-    `;
+      WHERE c."usuarioId" = $1 AND c.estado = 'impago'`;
+
+    let queryParams = [usuarioId, limit, offset];
+
+    if (search) {
+      query += ` AND cl.nombres ILIKE $4`;
+      queryParams.push(searchFilter);
+    }
+
+    query += ` ORDER BY c."createdAt" DESC
+      LIMIT $2 OFFSET $3`
   
-    const result = await db.query(query, [usuarioId, limit, offset]);
+    const result = await db.query(query, queryParams);
     return result.rows;
-  },  
+  },
 
   //Contar los impagos por usuario
-  countImpagosByUsuario : async (usuarioId) => {
-    const query = `
+  countImpagosByUsuario : async (usuarioId, search) => {
+    const searchFilter = search === '' ? null : `%${search}%`;
+
+    let query = `
       SELECT COUNT(*) AS total
-      FROM creditos
-      WHERE "usuarioId" = $1 AND estado = 'impago';
-    `;
+      FROM creditos c
+      JOIN clientes cl ON cl.id = c."clienteId"
+      WHERE c."usuarioId" = $1 AND c.estado = 'impago'`;
+
+    let queryParams = [usuarioId];
+
+    if (search) {
+      query += ` AND cl.nombres ILIKE $2;`;
+      queryParams.push(searchFilter);
+    }
   
-    const result = await db.query(query, [usuarioId]);
+    const result = await db.query(query, queryParams);
     return parseInt(result.rows[0].total);
   },
 
