@@ -11,8 +11,50 @@ const programarCajasDinamico = () => {
         minute: '2-digit',
         hour12: false
       }).format(new Date());
+
+      const fechaHoy = new Intl.DateTimeFormat('es-EC', {
+        timeZone: 'America/Guayaquil',
+        year: 'numeric',
+        month: '2-digit',
+        day: '2-digit'
+      }).format(new Date());
+
+      const diaSemana = new Intl.DateTimeFormat('es-EC', {
+        timeZone: 'America/Guayaquil',
+        weekday: 'long'
+      }).format(new Date()).toLowerCase();
+
       const userId = 1; // Usuario del sistema
 
+      // 🛑 1️⃣ Verificar configuración de días no laborables
+      const configNoLaborable = await pool.query(`
+        SELECT excluir_sabados, excluir_domingos
+        FROM config_dias_no_laborables
+        LIMIT 1
+      `);
+      const { excluir_sabados, excluir_domingos } = configNoLaborable.rows[0];
+
+      // 🛑 2️⃣ Verificar si la fecha actual está en la tabla dias_no_laborables
+      const diaNoLaborable = await pool.query(`
+        SELECT 1 FROM dias_no_laborables
+        WHERE DATE(fecha) = CURRENT_DATE
+        LIMIT 1
+      `);
+
+      // 🛑 3️⃣ Evaluar si hoy se debe excluir
+      const esSabado = diaSemana.includes('sábado');
+      const esDomingo = diaSemana.includes('domingo');
+
+      if (
+        (excluir_sabados && esSabado) ||
+        (excluir_domingos && esDomingo) ||
+        diaNoLaborable.rowCount > 0
+      ) {
+        console.log(`[CRON][${horas}] Día no laborable (${fechaHoy}) → no se ejecuta apertura/cierre de cajas.`);
+        return; // 🚫 Salimos antes de procesar cajas
+      }
+
+      // 🔁 Tu código original desde aquí sin cambios
       const config = await pool.query(`
         SELECT 
           to_char(hora_apertura_caja, 'HH24:MI') AS apertura,
@@ -32,10 +74,8 @@ const programarCajasDinamico = () => {
       let sinCambios = 0;
 
       for (const { id: cajaId, estado } of cajas.rows) {
-        // 🟢 Apertura automática
         if (horas === apertura && estado === 'cerrada') {
           const resultado = await Caja.abrirCaja(cajaId, userId, true);
-
           if (resultado.success) {
             abiertas++;
             console.log(`[CRON][${horas}] Caja ${cajaId} abierta automáticamente: ${resultado.message}`);
@@ -43,8 +83,6 @@ const programarCajasDinamico = () => {
             yaAbiertas++;
             console.log(`[CRON][${horas}] Caja ${cajaId} NO se abrió: ${resultado.message}`);
           }
-
-        // 🔴 Cierre automático (solo estado)
         } else if (horas === cierre && estado === 'abierta') {
           await pool.query(`
             UPDATE cajas SET estado = 'cerrada', "updatedAt" = NOW()
@@ -52,15 +90,12 @@ const programarCajasDinamico = () => {
           `, [cajaId]);
           cerradas++;
           console.log(`[CRON][${horas}] Caja ${cajaId} cerrada automáticamente (estado actualizado)`);
-
-        // 🔵 Sin acción
         } else {
           sinCambios++;
           console.log(`[CRON][${horas}] Caja ${cajaId} sin cambios (estado actual: ${estado})`);
         }
       }
 
-      // ✅ Resumen final
       console.log(`[CRON][${horas}] RESUMEN → Total cajas: ${totalCajas} | Aberturas: ${abiertas} | Saltadas (turno abierto): ${yaAbiertas} | Cierres: ${cerradas} | Sin cambios: ${sinCambios}`);
 
     } catch (err) {
