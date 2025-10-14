@@ -482,13 +482,92 @@ const Credito = {
   // Obtener un crédito por ID con los pagos asociados
   getById: async (id) => {
     const queryText = `
-      SELECT c.*, 
-        COALESCE(json_agg(jsonb_build_object('id', p.id, 'monto', p.monto, 'fecha', p."createdAt")) FILTER (WHERE p.id IS NOT NULL), '[]') AS cuotas
+      SELECT 
+        c.*,
+
+        -- Información del cliente
+        json_build_object(
+          'id', cl.id,
+          'nombres', cl.nombres,
+          'telefono', cl.telefono,
+          'direccion', cl.direccion,
+          'coordenadasCasa', cl."coordenadasCasa",
+          'coordenadasCobro', cl."coordenadasCobro",
+          'identificacion', cl.identificacion,
+          'rutaId', cl."rutaId",
+          'fotos', (
+            SELECT COALESCE(json_agg(foto.foto), '[]'::json)
+            FROM fotoclientes foto
+            WHERE foto."clienteId" = cl.id
+          )
+        ) AS cliente,
+
+        -- Información del producto
+        json_build_object(
+          'id', p.id,
+          'nombre', p.nombre,
+          'precio', p.precio
+        ) AS producto,
+
+        -- Cuotas del crédito
+        (
+          SELECT COALESCE(json_agg(
+            json_build_object(
+              'id', q.id,
+              'monto', q.monto,
+              'fecha_pago', q."fechaPago",
+              'estado', q.estado,
+              'creditoId', q."creditoId",
+              'createdAt', q."createdAt",
+              'updatedAt', q."updatedAt",
+              'monto_pagado', q."monto_pagado"
+            )
+          ), '[]'::json)
+          FROM cuotas q
+          WHERE q."creditoId" = c.id
+        ) AS cuotas,
+
+        -- Pagos relacionados a las cuotas del crédito
+        (
+          SELECT COALESCE(json_agg(
+            json_build_object(
+              'id', pa.id,
+              'monto', pa.monto,
+              'fechaPago', pa."createdAt",
+              'metodoPago', pa."metodoPago",
+              'createdAt', pa."createdAt",
+              'updatedAt', pa."updatedAt",
+              'cuotas', (
+                SELECT json_agg(
+                  json_build_object(
+                    'cuotaId', pc."cuotaId",
+                    'monto_abonado', pc."monto_abonado",
+                    'capital_pagado', pc."capital_pagado",
+                    'interes_pagado', pc."interes_pagado",
+                    'created_at', pc."created_at"
+                  )
+                )
+                FROM pagos_cuotas pc
+                WHERE pc."pagoId" = pa.id
+              )
+            )
+          ), '[]'::json)
+          FROM pagos pa
+          WHERE pa.id IN (
+            SELECT DISTINCT pc."pagoId"
+            FROM cuotas q
+            JOIN pagos_cuotas pc ON q.id = pc."cuotaId"
+            WHERE q."creditoId" = c.id
+          )
+        ) AS pagos
+
       FROM creditos c
-      LEFT JOIN pagos p ON c.id = p."creditoId"
-      WHERE c.id = $1
-      GROUP BY c.id;
+      JOIN clientes cl ON c."clienteId" = cl.id
+      JOIN productos p ON c."productoId" = p.id
+
+      WHERE c.id = $1;
     `;
+
     const { rows } = await db.query(queryText, [id]);
     return rows.length ? rows[0] : null;
   },
