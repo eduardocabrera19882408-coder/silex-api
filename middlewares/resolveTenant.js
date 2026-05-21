@@ -36,9 +36,11 @@ async function getTenantData(subdomain) {
 
 module.exports = async function resolveTenant(req, res, next) {
     try {
+        console.log('resolveTenant', req.tenant);
         const tenantData = await getTenantData(req.tenant);
 
         req.schema = tenantData.schema_name;
+        console.log(tenantData.schema_name);
 
         next();
     } catch (err) {
