@@ -7,7 +7,7 @@ const login = async (req, res) => {
   const Usuario = UsuarioModel(req.db);
   const Permiso = PermisoModel(req.db);
   const Ruta = RutaModel(req.db);
-  const { email, password } = req.body;
+  const { email, password, company } = req.body;
   const secretKey = process.env.TOKEN;
 
   try {
@@ -54,6 +54,7 @@ const login = async (req, res) => {
         status: usuario.estado,
         permisos: permisos,
         ruta: ruta,
+        company: company,
       },
       secretKey,
       { expiresIn: '1h' }
