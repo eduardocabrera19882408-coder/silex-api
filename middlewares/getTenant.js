@@ -1,6 +1,6 @@
 module.exports = function getTenant(req, res, next) {
     // Intentar obtener el tenant desde x-tenant o desde origin
-    const tenantSource = req.headers['x-tenant'] || req.headers.origin;
+    const tenantSource = req.headers['x-tenant'];
 
     if (!tenantSource) {
         return res.status(400).json({ error: 'Tenant o Host no definido' });

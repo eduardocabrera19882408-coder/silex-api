@@ -32,6 +32,8 @@ async function getTenantData(subdomain) {
 
     pending.set(subdomain, promise);
 
+    console.log(promise)
+
     return promise;
 }
 
